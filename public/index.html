@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Cropper</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>PDF Cropper</h1>
+    <form id="uploadForm" enctype="multipart/form-data" method="POST" action="/upload">
+      <input type="file" name="pdfFile" id="pdfFile" accept="application/pdf" required>
+      <button type="submit">Upload and Crop PDF</button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    form.onsubmit = function(event) {
+      const fileInput = document.getElementById('pdfFile');
+      if (!fileInput.files.length) {
+        event.preventDefault();
+        alert('Please select a PDF file to upload.');
+      }
+    };
+  </script>
+</body>
+</html>
