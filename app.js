@@ -3,11 +3,12 @@ const multer = require('multer');
 const { PDFDocument } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Serve static files from 'public' folder (modify if needed)
+// Serve static files from 'public' folder
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
@@ -33,81 +34,94 @@ async function cropPDFInBatches(inputPath, outputPath, batchSize = 100) {
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
     const totalPages = pdfDoc.getPages().length;
     let croppedPdf = await PDFDocument.create();
-  
+
     for (let i = 0; i < totalPages; i += batchSize) {
-      const end = Math.min(i + batchSize, totalPages);
-      const currentPages = pdfDoc.getPages().slice(i, end);
-      //console.log(`Processing pages from ${i + 1} to ${end}`);
-  
-      currentPages.forEach((page) => {
-        const width = page.getWidth();
-        const height = page.getHeight();
+        const end = Math.min(i + batchSize, totalPages);
+        const currentPages = pdfDoc.getPages().slice(i, end);
 
-    // Crop 100 units from each side (adjust if necessary)
-    // For 1000 PDF
-    // const left = 50;
-    // const bottom = 535;
-    // const right = width - 320;
-    // const top = height - 613;
-    
-    // For 1000 PDF
-    // const left = 58;
-    // const bottom = 567;
-    // const right = width - 319;
-    // const top = height - 679;
+        currentPages.forEach((page) => {
+            const width = page.getWidth();
+            const height = page.getHeight();
 
-    // For 3000 PDF
-    // const left = 67;
-    // const bottom = 555;
-    // const right = width - 332;
-    // const top = height - 630;
+            // Cropping coordinates (adjust as needed)
+            const left = 67;
+            const bottom = 555;
+            const right = width - 332;
+            const top = height - 630;
 
-    // For 4000 PDF
-    const left = 67;
-    const bottom = 555;
-    const right = width - 332;
-    const top = height - 630;
+            // Apply cropping
+            page.setCropBox(left, bottom, right, top);
+        });
 
-    // Set the visible portion of the PDF using the media box
-    //page.setMediaBox(left, bottom, right, top);
+        // Copy pages to the new document
+        const copiedPages = await croppedPdf.copyPages(pdfDoc, [...Array(end - i).keys()].map(n => n + i));
+        copiedPages.forEach((page) => croppedPdf.addPage(page));
+    }
 
-    // Set the crop box as well for PDF viewers that respect cropBox
-    page.setCropBox(left, bottom, right, top);
-  });
-
-    // Copy pages to the new document (returns an array of copied pages)
-    const copiedPages = await croppedPdf.copyPages(pdfDoc, [...Array(end - i).keys()].map(n => n + i));
-
-    // Add each copied page to the new cropped PDF
-    copiedPages.forEach((page) => {
-        croppedPdf.addPage(page);
-    });
-  }
-
-  // Save the cropped PDF
-  const croppedPdfBytes = await croppedPdf.save();
-  fs.writeFileSync(outputPath, croppedPdfBytes);
+    // Save the cropped PDF
+    const croppedPdfBytes = await croppedPdf.save();
+    fs.writeFileSync(outputPath, croppedPdfBytes);
 }
 
 // Handle PDF upload and cropping
 app.post('/upload', upload.single('pdfFile'), async (req, res) => {
-  const inputPdfPath = req.file.path;
-  const outputPdfPath = `cropped_pdfs/cropped_${Date.now()}.pdf`;
+    const inputPdfPath = req.file.path;
+    const outputPdfPath = `cropped_pdfs/cropped_${Date.now()}.pdf`;
 
-  try {
-    await cropPDFInBatches(inputPdfPath, outputPdfPath, 100);
-    res.download(outputPdfPath); // Send the cropped PDF back for download
-  } catch (error) {
-    console.error('Error cropping PDF:', error);
-    res.status(500).send('Error cropping PDF');
-  }
+    try {
+        await cropPDFInBatches(inputPdfPath, outputPdfPath, 100);
+        res.download(outputPdfPath);
+    } catch (error) {
+        console.error('Error cropping PDF:', error);
+        res.status(500).send('Error cropping PDF');
+    }
+});
+
+// Function to delete old .pdf files (excluding .gitkeep)
+function deleteOldPDFFiles(directory, hours) {
+    const now = Date.now();
+    const threshold = hours * 60 * 60 * 1000; // Convert hours to milliseconds
+
+    if (fs.existsSync(directory)) {
+        fs.readdirSync(directory).forEach(file => {
+            const filePath = path.join(directory, file);
+
+            // Only delete .pdf files (ignore .gitkeep and other files)
+            if (path.extname(file) === '.pdf') {
+                fs.stat(filePath, (err, stats) => {
+                    if (err) {
+                        console.error(`Error reading file stats: ${err}`);
+                        return;
+                    }
+
+                    // Check if file is older than the threshold
+                    if (now - stats.mtimeMs > threshold) {
+                        fs.unlink(filePath, (err) => {
+                            if (err) {
+                                console.error(`Error deleting file ${filePath}: ${err}`);
+                            } else {
+                                console.log(`Deleted old PDF file: ${filePath}`);
+                            }
+                        });
+                    }
+                });
+            }
+        });
+    } else {
+        console.log(`Directory not found: ${directory}`);
+    }
+}
+
+// Schedule the cron job to delete old PDFs every hour
+cron.schedule('* * * * *', () => {
+    console.log('Running scheduled PDF cleanup...');
+
+    // Delete PDF files older than 1 hours
+    deleteOldPDFFiles('cropped_pdfs', 1);
+    deleteOldPDFFiles('uploads', 1);
 });
 
 // Start the server
-// app.listen(PORT, () => {
-//   console.log(`Server is running on http://localhost:${PORT}`);
-// });
-
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
 });
